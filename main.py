@@ -41,17 +41,17 @@ if not os.path.exists("char_images"):
             except (UnicodeError, OSError):
                 pass
 
-termina_width, termina_height = os.get_terminal_size()
+terminal_width, terminal_height = os.get_terminal_size()
 
 img_width, img_height = img.size
 
-max_chars_width = termina_width
-max_chars_height = termina_height - 2
+max_chars_width = terminal_width - 2
+max_chars_height = terminal_height - 2
 
 target_width = max_chars_width * font_size
-target_height = max_chars_height * int(font_size * 1.2)
+target_height = max_chars_height * font_size
 
-img_aspect = img_width / img_height
+img_aspect = 1.2 * img_width / img_height
 target_aspect = target_width / target_height
 
 if img_aspect > target_aspect:
