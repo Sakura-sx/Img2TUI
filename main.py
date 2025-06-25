@@ -3,8 +3,14 @@ from PIL import Image, ImageDraw, ImageFont
 import numpy as np
 import hashlib
 from concurrent.futures import ThreadPoolExecutor
+import sys
 
-img_file = "img.png"
+if len(sys.argv) != 2:
+    print("Usage: python3 main.py <image_path>")
+    sys.exit(1)
+
+img_file = sys.argv[1]
+
 img = Image.open(img_file)
 
 font_size = 12
@@ -36,7 +42,6 @@ if not os.path.exists("char_images"):
                 pass
 
 termina_width, termina_height = os.get_terminal_size()
-print(termina_width, termina_height)
 
 img_width, img_height = img.size
 
