@@ -27,11 +27,11 @@ if not os.path.exists("char_images"):
             try:
                 char = chr(char_code)
                 if char.isprintable() or char_code in range(0x2500, 0x25FF):
-                    img = Image.new("L", (font_size, int(font_size * 1.2)), 255)
-                    draw = ImageDraw.Draw(img)
-                    center_x, center_y = int(font_size * 0.6), font_size // 2
+                    img_char = Image.new("L", (font_size, int(font_size * 1.2)), 255)
+                    draw = ImageDraw.Draw(img_char)
+                    center_x, center_y = int(font_size * 0.5), int(font_size * 0.6)
                     draw.text((center_x, center_y), char, font=font, fill=0, anchor="mm")
-                    img.save(f"char_images/{char_code}.png")
+                    img_char.save(f"char_images/{char_code}.png")
             except (UnicodeError, OSError):
                 pass
 
@@ -40,33 +40,35 @@ print(termina_width, termina_height)
 
 img_width, img_height = img.size
 
-terminal_resolution = (termina_width * font_size, int(termina_height * font_size * 1.2))
+max_chars_width = termina_width
+max_chars_height = termina_height - 2
+
+target_width = max_chars_width * font_size
+target_height = max_chars_height * int(font_size * 1.2)
 
 img_aspect = img_width / img_height
-terminal_aspect = terminal_resolution[0] / terminal_resolution[1]
+target_aspect = target_width / target_height
 
-if img_aspect > terminal_aspect:
-    new_width = terminal_resolution[0]
-    new_height = int(new_width / img_aspect)
+if img_aspect > target_aspect:
+    new_width = target_width
+    new_height = int(target_width / img_aspect)
 else:
-    new_height = terminal_resolution[1]
-    new_width = int(new_height * img_aspect)
+    new_height = target_height
+    new_width = int(target_height * img_aspect)
 
 img_resized = img.resize((new_width, new_height), Image.Resampling.LANCZOS)
 
-final_img = Image.new("RGB", terminal_resolution, (0, 0, 0))
+final_img = Image.new("RGB", (target_width, target_height), (0, 0, 0))
 
-x_offset = (terminal_resolution[0] - new_width) // 2
-y_offset = (terminal_resolution[1] - new_height) // 2
+x_offset = (target_width - new_width) // 2
+y_offset = (target_height - new_height) // 2
 
 final_img.paste(img_resized, (x_offset, y_offset))
 
-img = final_img
+color_img = final_img
+gray_img = final_img.convert("L")
 
-color_img = img
-gray_img = img.convert("L")
-
-img_width, img_height = gray_img.size
+final_width, final_height = final_img.size
 
 def rgb_to_ansi(r, g, b):
     return f"\033[38;2;{r};{g};{b}m"
@@ -74,24 +76,10 @@ def rgb_to_ansi(r, g, b):
 def reset_color():
     return "\033[0m"
 
-def get_average_color(img_chunk):
-    pixels = list(img_chunk.getdata())
-    if not pixels:
-        return (0, 0, 0)
-    
-    r_sum = sum(pixel[0] for pixel in pixels)
-    g_sum = sum(pixel[1] for pixel in pixels) 
-    b_sum = sum(pixel[2] for pixel in pixels)
-    pixel_count = len(pixels)
-    
-    return (r_sum // pixel_count, g_sum // pixel_count, b_sum // pixel_count)
-
 def rgb_to_ansi_fg_bg(fg_r, fg_g, fg_b, bg_r, bg_g, bg_b):
     return f"\033[38;2;{fg_r};{fg_g};{fg_b}m\033[48;2;{bg_r};{bg_g};{bg_b}m"
 
 def get_text_and_bg_colors(color_chunk, char_img):
-    color_chunk = color_chunk.resize((font_size, int(font_size * 1.2)), Image.Resampling.LANCZOS)
-    
     color_pixels = list(color_chunk.getdata())
     char_pixels = list(char_img.getdata())
     
@@ -122,19 +110,31 @@ def get_text_and_bg_colors(color_chunk, char_img):
     
     return (text_r, text_g, text_b), (bg_r, bg_g, bg_b)
 
-chunks = [[None for _ in range(termina_width)] for _ in range(termina_height)]
-color_chunks = [[None for _ in range(termina_width)] for _ in range(termina_height)]
+chunk_height = int(font_size * 1.2)
+chars_height = final_height // chunk_height
+chars_width = final_width // font_size
 
-for y in range(0, img_height, 14):
-    for x in range(0, img_width, 12):
-        chunk_row = y // 14
-        chunk_col = x // 12
+chunks = [[None for _ in range(chars_width)] for _ in range(chars_height)]
+color_chunks = [[None for _ in range(chars_width)] for _ in range(chars_height)]
+
+for row in range(chars_height):
+    for col in range(chars_width):
+        y = row * chunk_height
+        x = col * font_size
         
-        if chunk_row < termina_height and chunk_col < termina_width:
-            gray_chunk = gray_img.crop((x, y, x + 12, y + 14))
-            color_chunk = color_img.crop((x, y, x + 12, y + 14))
-            chunks[chunk_row][chunk_col] = gray_chunk
-            color_chunks[chunk_row][chunk_col] = color_chunk
+        y_end = min(y + chunk_height, final_height)
+        x_end = min(x + font_size, final_width)
+        
+        if y < final_height and x < final_width:
+            gray_chunk = gray_img.crop((x, y, x_end, y_end))
+            color_chunk = color_img.crop((x, y, x_end, y_end))
+            
+            if gray_chunk.size != (font_size, chunk_height):
+                gray_chunk = gray_chunk.resize((font_size, chunk_height), Image.Resampling.LANCZOS)
+                color_chunk = color_chunk.resize((font_size, chunk_height), Image.Resampling.LANCZOS)
+                
+            chunks[row][col] = gray_chunk
+            color_chunks[row][col] = color_chunk
 
 char_images = {}
 for start, end in UNICODE_RANGES:
@@ -169,8 +169,7 @@ def find_closest_char_fast(chunk):
     if chunk_hash in chunk_cache:
         return chunk_cache[chunk_hash]
     
-    chunk_resized = chunk.resize((font_size, int(font_size * 1.2)), Image.Resampling.LANCZOS)
-    chunk_arr = np.array(chunk_resized)
+    chunk_arr = np.array(chunk)
     threshold = np.median(chunk_arr)
     chunk_binary = (chunk_arr < threshold).astype(np.uint8).flatten()
     
@@ -182,32 +181,6 @@ def find_closest_char_fast(chunk):
     
     chunk_cache[chunk_hash] = result
     return result
-
-def rgb_to_ansi_fg_only(r, g, b):
-    return f"\033[38;2;{r};{g};{b}m"
-
-def get_text_color_only(color_chunk, char_img):
-    color_chunk = color_chunk.resize((font_size, int(font_size * 1.2)), Image.Resampling.LANCZOS)
-    
-    color_pixels = list(color_chunk.getdata())
-    char_pixels = list(char_img.getdata())
-    
-    text_pixels = []
-    
-    threshold = 127
-    
-    for color_pixel, char_pixel in zip(color_pixels, char_pixels):
-        if char_pixel < threshold:
-            text_pixels.append(color_pixel)
-    
-    if text_pixels:
-        text_r = sum(p[0] for p in text_pixels) // len(text_pixels)
-        text_g = sum(p[1] for p in text_pixels) // len(text_pixels)
-        text_b = sum(p[2] for p in text_pixels) // len(text_pixels)
-    else:
-        text_r = text_g = text_b = 255
-    
-    return (text_r, text_g, text_b)
 
 result_text = []
 for row_idx, row in enumerate(chunks):
