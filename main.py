@@ -10,12 +10,6 @@ import yt_dlp
 import tempfile
 import re
 import argparse
-import queue
-import threading
-from collections import defaultdict
-
-MAX_FRAME_BUFFER = 8
-MAX_PROCESSED_BUFFER = 16
 
 QUALITY_PRESETS = {
     'fastest': {
@@ -74,7 +68,7 @@ MAX_CHARS_WIDTH = TERMINAL_WIDTH - 2
 MAX_CHARS_HEIGHT = TERMINAL_HEIGHT - 3
 TARGET_WIDTH = MAX_CHARS_WIDTH * FONT_SIZE
 TARGET_HEIGHT = MAX_CHARS_HEIGHT * FONT_SIZE
-CHUNK_HEIGHT = int(FONT_SIZE * 1.2)
+CHUNK_HEIGHT = int(FONT_SIZE * 2)
 
 RESET_COLOR = "\033[0m"
 CLEAR_SCREEN = "\033[2J\033[H"
@@ -88,12 +82,6 @@ def parse_arguments():
                        help='List available quality presets')
     parser.add_argument('--no-auto-adjust', action='store_true',
                        help='Disable automatic quality adjustment for videos')
-    parser.add_argument('--threads', type=int, default=8,
-                       help='Number of frame processing threads (default: 8)')
-    parser.add_argument('--precompute', action='store_true',
-                       help='Precompute all frames before playback for smoother performance')
-    parser.add_argument('--max-memory-frames', type=int, default=1000,
-                       help='Maximum frames to keep in memory during precomputation (default: 1000)')
     return parser.parse_args()
 
 def list_presets():
@@ -158,7 +146,7 @@ def initialize_character_set(quality_preset):
     font = ImageFont.truetype("CascadiaMono.ttf", FONT_SIZE)
     
     char_font_size = int(FONT_SIZE * char_scale)
-    char_chunk_height = int(char_font_size * 1.2)
+    char_chunk_height = int(char_font_size * 2)
     
     if not os.path.exists("char_images"):
         os.makedirs("char_images")
@@ -349,7 +337,7 @@ def process_frame_optimized(img, quality_preset, patterns, char_codes, char_look
     color_scale = preset.get('color_resolution_scale', 1.0)
     
     img_width, img_height = img.size
-    img_aspect = 1.2 * img_width / img_height
+    img_aspect = 2 * img_width / img_height
     target_aspect = TARGET_WIDTH / TARGET_HEIGHT
 
     if img_aspect > target_aspect:
@@ -358,7 +346,7 @@ def process_frame_optimized(img, quality_preset, patterns, char_codes, char_look
     else:
         new_height = TARGET_HEIGHT
         new_width = int(TARGET_HEIGHT * img_aspect)
-
+        
     img_array = np.array(img)
     img_array = ensure_rgb_image(img_array)
     
@@ -370,9 +358,9 @@ def process_frame_optimized(img, quality_preset, patterns, char_codes, char_look
     final_img[y_offset:y_offset+new_height, x_offset:x_offset+new_width] = img_resized
 
     char_font_size = int(FONT_SIZE * char_scale)
-    char_chunk_height = int(char_font_size * 1.2)
+    char_chunk_height = int(char_font_size * 2)
     color_font_size = int(FONT_SIZE * color_scale)
-    color_chunk_height = int(color_font_size * 1.2)
+    color_chunk_height = int(color_font_size * 2)
 
     if preset['use_background_only']:
         color_img_downsampled = downsample_image(final_img, color_scale)
@@ -460,210 +448,6 @@ def get_quality_adjustment(current_fps, target_fps, current_preset):
     
     return current_preset
 
-def precompute_frame_worker(frame_data, quality_preset, patterns, char_codes, char_lookup):
-    frame_number, frame = frame_data
-    frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-    img = Image.fromarray(frame_rgb)
-    
-    chunk_cache = {}
-    result_text = process_frame_optimized(img, quality_preset, patterns, char_codes, char_lookup, chunk_cache)
-    return frame_number, result_text
-
-def precompute_video_frames(cap, quality_preset, patterns, char_codes, char_lookup, max_threads=4, max_memory_frames=1000):
-    total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
-    fps = cap.get(cv2.CAP_PROP_FPS)
-    
-    print(f"Precomputing {total_frames} frames...")
-    print(f"Using {max_threads} threads for precomputation")
-    
-    precomputed_frames = {}
-    temp_files = {}
-    frames_in_memory = 0
-    
-    frame_data = []
-    frame_number = 0
-    
-    while True:
-        ret, frame = cap.read()
-        if not ret:
-            break
-        frame_data.append((frame_number, frame))
-        frame_number += 1
-    
-    cap.set(cv2.CAP_PROP_POS_FRAMES, 0)
-    
-    start_time = time.time()
-    
-    with ThreadPoolExecutor(max_workers=max_threads) as executor:
-        batch_size = max_threads * 4
-        
-        for i in range(0, len(frame_data), batch_size):
-            batch = frame_data[i:i + batch_size]
-            
-            futures = []
-            for frame_info in batch:
-                future = executor.submit(precompute_frame_worker, frame_info, quality_preset, patterns, char_codes, char_lookup)
-                futures.append(future)
-            
-            for future in futures:
-                frame_num, result_text = future.result()
-                
-                if frames_in_memory < max_memory_frames:
-                    precomputed_frames[frame_num] = result_text
-                    frames_in_memory += 1
-                else:
-                    temp_file = tempfile.NamedTemporaryFile(mode='w', delete=False, suffix='.txt')
-                    temp_file.write('\n'.join(result_text))
-                    temp_file.close()
-                    temp_files[frame_num] = temp_file.name
-                
-                progress = ((frame_num + 1) / total_frames) * 100
-                elapsed = time.time() - start_time
-                
-                if frame_num > 0:
-                    eta = (elapsed / (frame_num + 1)) * (total_frames - frame_num - 1)
-                    eta_min = int(eta // 60)
-                    eta_sec = int(eta % 60)
-                    print(f"\rProgress: {progress:.1f}% ({frame_num + 1}/{total_frames}) - ETA: {eta_min}:{eta_sec:02d}", end="", flush=True)
-    
-    print(f"\nPrecomputation completed in {time.time() - start_time:.1f}s")
-    print(f"Frames in memory: {frames_in_memory}, Frames on disk: {len(temp_files)}")
-    
-    return precomputed_frames, temp_files, total_frames, fps
-
-def get_precomputed_frame(frame_number, precomputed_frames, temp_files):
-    if frame_number in precomputed_frames:
-        return precomputed_frames[frame_number]
-    elif frame_number in temp_files:
-        with open(temp_files[frame_number], 'r') as f:
-            content = f.read().strip()
-            return content.split('\n')
-    else:
-        return None
-
-def cleanup_temp_files(temp_files):
-    for temp_file in temp_files.values():
-        try:
-            os.unlink(temp_file)
-        except OSError:
-            pass
-
-def frame_reader_thread(cap, frame_queue, stop_event):
-    frame_number = 0
-    while not stop_event.is_set():
-        ret, frame = cap.read()
-        if not ret:
-            break
-        
-        try:
-            frame_queue.put((frame_number, frame), timeout=0.1)
-            frame_number += 1
-        except queue.Full:
-            continue
-    
-    frame_queue.put(None)
-
-def frame_processor_thread(frame_queue, processed_queue, quality_data, stop_event):
-    current_quality, patterns, char_codes, char_lookup = quality_data
-    local_chunk_cache = {}
-    
-    while not stop_event.is_set():
-        try:
-            item = frame_queue.get(timeout=0.1)
-            if item is None:
-                processed_queue.put(None)
-                break
-            
-            frame_number, frame = item
-            frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-            img = Image.fromarray(frame_rgb)
-            
-            result_text = process_frame_optimized(img, current_quality, patterns, char_codes, char_lookup, local_chunk_cache)
-            
-            processed_queue.put((frame_number, result_text))
-            frame_queue.task_done()
-            
-        except queue.Empty:
-            continue
-
-class ConcurrentFrameProcessor:
-    def __init__(self, num_threads=4):
-        self.num_threads = num_threads
-        self.frame_queue = queue.Queue(maxsize=MAX_FRAME_BUFFER)
-        self.processed_queue = queue.Queue(maxsize=MAX_PROCESSED_BUFFER)
-        self.stop_event = threading.Event()
-        self.reader_thread = None
-        self.processor_threads = []
-        self.frame_buffer = {}
-        self.next_display_frame = 0
-        
-    def start(self, cap, quality_data):
-        self.stop_event.clear()
-        
-        self.reader_thread = threading.Thread(
-            target=frame_reader_thread,
-            args=(cap, self.frame_queue, self.stop_event)
-        )
-        self.reader_thread.start()
-        
-        for i in range(self.num_threads):
-            thread = threading.Thread(
-                target=frame_processor_thread,
-                args=(self.frame_queue, self.processed_queue, quality_data, self.stop_event)
-            )
-            thread.start()
-            self.processor_threads.append(thread)
-    
-    def get_next_frame(self, timeout=1.0):
-        while True:
-            if self.next_display_frame in self.frame_buffer:
-                result = self.frame_buffer.pop(self.next_display_frame)
-                self.next_display_frame += 1
-                return result
-            
-            try:
-                item = self.processed_queue.get(timeout=timeout)
-                if item is None:
-                    return None
-                
-                frame_number, result_text = item
-                if frame_number == self.next_display_frame:
-                    self.next_display_frame += 1
-                    return result_text
-                else:
-                    self.frame_buffer[frame_number] = result_text
-                    
-            except queue.Empty:
-                return "TIMEOUT"
-    
-    def update_quality(self, quality_data):
-        self.stop()
-        self.frame_buffer.clear()
-        self.next_display_frame = 0
-        
-    def stop(self):
-        self.stop_event.set()
-        
-        if self.reader_thread:
-            self.reader_thread.join()
-        
-        for thread in self.processor_threads:
-            thread.join()
-        
-        self.processor_threads.clear()
-        
-        while not self.frame_queue.empty():
-            try:
-                self.frame_queue.get_nowait()
-            except queue.Empty:
-                break
-        
-        while not self.processed_queue.empty():
-            try:
-                self.processed_queue.get_nowait()
-            except queue.Empty:
-                break
-
 def main():
     args = parse_arguments()
     
@@ -694,6 +478,7 @@ def main():
         
         current_quality = args.quality
         char_images, patterns, char_codes, char_lookup = initialize_character_set(current_quality)
+        chunk_cache = {}
         
         if is_video:
             cap = cv2.VideoCapture(media_file)
@@ -706,132 +491,74 @@ def main():
             frame_delay = 1.0 / fps if fps > 0 else 1.0 / 30
             total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
             
-            print(f"Video: {fps:.1f} FPS, {total_frames} frames")
+            frame_count = 0
+            start_time = time.time()
+            last_fps_update = start_time
+            last_quality_check = start_time
+            current_fps = 0
             
-            if args.precompute:
-                precomputed_frames, temp_files, total_frames, fps = precompute_video_frames(
-                    cap, current_quality, patterns, char_codes, char_lookup, 
-                    args.threads, args.max_memory_frames
-                )
-                
-                frame_count = 0
-                start_time = time.time()
-                
-                print("Starting precomputed playback. Press Ctrl+C to stop")
-                
-                try:
-                    while frame_count < total_frames:
-                        frame_start = time.time()
+            print(f"Playing video: {fps:.1f} FPS, {total_frames} frames")
+            if not args.no_auto_adjust:
+                print("Auto quality adjustment enabled")
+            print("Press Ctrl+C to stop")
+            
+            try:
+                while True:
+                    frame_start = time.time()
+                    
+                    ret, frame = cap.read()
+                    if not ret:
+                        print("\nVideo finished")
+                        break
                         
-                        result_text = get_precomputed_frame(frame_count, precomputed_frames, temp_files)
-                        if result_text is None:
-                            break
+                    frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+                    img = Image.fromarray(frame_rgb)
+                    
+                    result_text = process_frame_optimized(img, current_quality, patterns, char_codes, char_lookup, chunk_cache)
+                    
+                    print(CLEAR_SCREEN, end="")
+                    
+                    frame_count += 1
+                    current_time = time.time()
+                    
+                    if current_time - last_fps_update >= 1.0:
+                        current_fps = frame_count / (current_time - start_time)
+                        last_fps_update = current_time
+                    
+                    if not args.no_auto_adjust and current_time - last_quality_check >= 3.0:
+                        new_quality = get_quality_adjustment(current_fps, fps, current_quality)
+                        if new_quality != current_quality:
+                            print(f"\nAdjusting quality: {current_quality} -> {new_quality}")
+                            current_quality = new_quality
+                            char_images, patterns, char_codes, char_lookup = initialize_character_set(current_quality)
+                            chunk_cache.clear()
+                        last_quality_check = current_time
+                    
+                    progress = (frame_count / total_frames) * 100 if total_frames > 0 else 0
+                    elapsed_time = current_time - start_time
+                    elapsed_min = int(elapsed_time // 60)
+                    elapsed_sec = int(elapsed_time % 60)
+                    
+                    preset_name = QUALITY_PRESETS[current_quality]['name']
+                    print(f"\033[33m{preset_name} | FPS: {current_fps:.1f}/{fps:.1f} | Progress: {progress:.1f}% | Time: {elapsed_min}:{elapsed_sec:02d}\033[0m")
+                    
+                    print('\n'.join(result_text))
+                    
+                    frame_end = time.time()
+                    processing_time = frame_end - frame_start
+                    
+                    remaining_time = frame_delay - processing_time
+                    if remaining_time > 0:
+                        time.sleep(remaining_time)
                         
-                        print(CLEAR_SCREEN, end="")
-                        
-                        current_time = time.time()
-                        elapsed_time = current_time - start_time
-                        elapsed_min = int(elapsed_time // 60)
-                        elapsed_sec = int(elapsed_time % 60)
-                        progress = (frame_count / total_frames) * 100
-                        
-                        preset_name = QUALITY_PRESETS[current_quality]['name']
-                        print(f"\033[33m{preset_name} (Precomputed) | Progress: {progress:.1f}% | Time: {elapsed_min}:{elapsed_sec:02d}\033[0m")
-                        
-                        if isinstance(result_text, list):
-                            print('\n'.join(result_text))
-                        else:
-                            print(result_text)
-                        
-                        frame_count += 1
-                        
-                        frame_end = time.time()
-                        processing_time = frame_end - frame_start
-                        
-                        remaining_time = frame_delay - processing_time
-                        if remaining_time > 0:
-                            time.sleep(remaining_time)
-                            
-                except KeyboardInterrupt:
-                    print("\nPlayback stopped by user")
-                finally:
-                    cleanup_temp_files(temp_files)
-                    cap.release()
-            else:
-                frame_count = 0
-                start_time = time.time()
-                last_fps_update = start_time
-                last_quality_check = start_time
-                current_fps = 0
-                
-                print(f"Using {args.threads} processing threads")
-                if not args.no_auto_adjust:
-                    print("Auto quality adjustment enabled")
-                print("Press Ctrl+C to stop")
-                
-                processor = ConcurrentFrameProcessor(args.threads)
-                quality_data = (current_quality, patterns, char_codes, char_lookup)
-                processor.start(cap, quality_data)
-                
-                try:
-                    while True:
-                        frame_start = time.time()
-                        
-                        result_text = processor.get_next_frame(timeout=2.0)
-                        if result_text is None:
-                            print("\nVideo finished")
-                            break
-                        elif result_text == "TIMEOUT":
-                            continue
-                        
-                        print(CLEAR_SCREEN, end="")
-                        
-                        frame_count += 1
-                        current_time = time.time()
-                        
-                        if current_time - last_fps_update >= 1.0:
-                            current_fps = frame_count / (current_time - start_time)
-                            last_fps_update = current_time
-                        
-                        if not args.no_auto_adjust and current_time - last_quality_check >= 3.0:
-                            new_quality = get_quality_adjustment(current_fps, fps, current_quality)
-                            if new_quality != current_quality:
-                                print(f"\nAdjusting quality: {current_quality} -> {new_quality}")
-                                current_quality = new_quality
-                                char_images, patterns, char_codes, char_lookup = initialize_character_set(current_quality)
-                                quality_data = (current_quality, patterns, char_codes, char_lookup)
-                                processor.stop()
-                                processor = ConcurrentFrameProcessor(args.threads)
-                                processor.start(cap, quality_data)
-                            last_quality_check = current_time
-                        
-                        progress = (frame_count / total_frames) * 100 if total_frames > 0 else 0
-                        elapsed_time = current_time - start_time
-                        elapsed_min = int(elapsed_time // 60)
-                        elapsed_sec = int(elapsed_time % 60)
-                        
-                        preset_name = QUALITY_PRESETS[current_quality]['name']
-                        print(f"\033[33m{preset_name} | FPS: {current_fps:.1f}/{fps:.1f} | Progress: {progress:.1f}% | Time: {elapsed_min}:{elapsed_sec:02d} | Threads: {args.threads}\033[0m")
-                        
-                        print('\n'.join(result_text))
-                        
-                        frame_end = time.time()
-                        processing_time = frame_end - frame_start
-                        
-                        remaining_time = frame_delay - processing_time
-                        if remaining_time > 0:
-                            time.sleep(remaining_time)
-                            
-                except KeyboardInterrupt:
-                    print("\nPlayback stopped by user")
-                finally:
-                    processor.stop()
-                    cap.release()
+            except KeyboardInterrupt:
+                print("\nPlayback stopped by user")
+            finally:
+                cap.release()
         else:
             img = Image.open(media_file)
             if img.mode != 'RGB':
                 img = img.convert('RGB')
-            chunk_cache = {}
             result_text = process_frame_optimized(img, current_quality, patterns, char_codes, char_lookup, chunk_cache)
             preset_name = QUALITY_PRESETS[current_quality]['name']
             print(f"Quality: {preset_name}")
