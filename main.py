@@ -11,6 +11,10 @@ import tempfile
 import re
 import argparse
 
+
+print("DEPRECATED: Use v2.py instead")
+exit()
+
 QUALITY_PRESETS = {
     'fastest': {
         'name': 'Fastest (Background only)',

@@ -1,3 +1,10 @@
+# ⚠️ **PHOTOSENSITIVITY/EPILEPSY WARNING** ⚠️ 
+
+## The video playback functionality contains rapidly flashing lights and colors that may trigger seizures in people with photosensitive epilepsy or other photosensitivities. Viewer discretion is strongly advised.
+
+
+
+
 # IMG2TUI
 
 Shows an image or video on the terminal using ASCII art with full color support.
@@ -18,7 +25,7 @@ Has been tested on Windows 11 PowerShell console.
 git clone https://github.com/Sakura-sx/img2tui.git
 cd img2tui
 python3 -m pip install -r requirements.txt
-python3 main.py <image_path_or_video_path_or_youtube_url>
+python3 v2.py <image_path_or_video_path_or_youtube_url>
 ```
 
 ### Linux
@@ -27,7 +34,7 @@ Not tested yet.
 git clone https://github.com/Sakura-sx/img2tui.git
 cd img2tui
 python3 -m pip install -r requirements.txt
-python3 main.py <image_path_or_video_path_or_youtube_url>
+python3 v2.py <image_path_or_video_path_or_youtube_url>
 ```
 
 ## Usage
