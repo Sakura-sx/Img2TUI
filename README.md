@@ -11,11 +11,10 @@ Shows an image or video on the terminal using ASCII art with full color support.
 
 ## Features
 
-- Display images in terminal over 900 unicode characters
-- Play videos in terminal with real-time conversion
+- Display videos and images in terminal
 - Support for YouTube videos (direct URL input)
 - Full RGB color support with ANSI escape codes
-- Multithreaded
+- 3 different quality presets (fastest, faster, medium)
 
 ## Installation
 
@@ -25,7 +24,7 @@ Has been tested on Windows 11 PowerShell console.
 git clone https://github.com/Sakura-sx/img2tui.git
 cd img2tui
 python3 -m pip install -r requirements.txt
-python3 v2.py <image_path_or_video_path_or_youtube_url>
+python3 main.py <image_path_or_video_path_or_youtube_url>
 ```
 
 ### Linux
@@ -34,29 +33,42 @@ Not tested yet.
 git clone https://github.com/Sakura-sx/img2tui.git
 cd img2tui
 python3 -m pip install -r requirements.txt
-python3 v2.py <image_path_or_video_path_or_youtube_url>
+python3 main.py <image_path_or_video_path_or_youtube_url>
 ```
 
 ## Usage
 
-### Display an image
 ```bash
-python3 main.py image.png
+python3 main.py [-h] [-q {fastest,faster,medium}] [-f FPS] [-nc] media
 ```
 
-### Play a video file
+### Arguments
+
+- `-h`: Show help message and exit
+- `-q {fastest,faster,medium}`: Set quality preset (default: faster)
+- `-f FPS`: Set target FPS (default: None)
+- `-nc`: Disable clearing the screen between frames, can cause flickering (default: True)
+
+### Examples
+
+#### Display an image in medium quality
+```bash
+python3 main.py -q medium image.png
+```
+
+#### Play a video file
 ```bash
 python3 main.py video.mp4
 ```
 
-### Play a YouTube video
+#### Play a YouTube video
 ```bash
-python3 main.py "https://www.youtube.com/watch?v=VIDEO_ID"
+python3 main.py https://www.youtube.com/watch?v=dQw4w9WgXcQ
 ```
 
 ### Supported formats
-- **Images**: PNG, JPG, JPEG, GIF, BMP, TIFF
-- **Videos**: MP4, AVI, MOV, MKV, WEBM, FLV, OGG
+- **Images**: PNG, JPG, JPEG, GIF, BMP, TIFF, WebP
+- **Videos**: MP4, AVI, MOV, MKV, WEBM, FLV, OGG, GIF
 - **YouTube**: Any public YouTube video URL
 
 ## Controls
@@ -71,7 +83,7 @@ python3 main.py "https://www.youtube.com/watch?v=VIDEO_ID"
 - [x] YouTube video support
 - [x] A way to stream videos and play them
 - [x] Different quality presets
-- [ ] Speedup video playback
+- [ ] Audio support
 
 ## Contributing
 
